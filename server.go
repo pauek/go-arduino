@@ -1,55 +1,81 @@
 package main
 
 import (
+	"bytes"
 	"embed"
 	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
 
+	"github.com/gorilla/websocket"
 	"github.com/pkg/browser"
 )
 
-type ApiFilenamePayload struct {
-	Filename string `json:"filename"`
+var upgrader = websocket.Upgrader{} // use default options
+
+type WebsocketCommand struct {
+	Cmd  string   `json:"cmd"`
+	Args []string `json:"args"`
 }
 
-func apiSaveFileHandler(w http.ResponseWriter, req *http.Request) {
-	log.Println("/api/save")
-
-	var payload ApiFilenamePayload
-
-	err := json.NewDecoder(req.Body).Decode(&payload)
+func websocketHandler(w http.ResponseWriter, req *http.Request) {
+	log.Println("/ws")
+	ws, err := upgrader.Upgrade(w, req, nil)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		log.Print("upgrade:", err)
 		return
 	}
-	fmt.Printf("%v\n", payload)
-	go SaveArduinoDataToFile(payload.Filename)
+	defer ws.Close()
 
-	fmt.Fprintf(w, `{"ok":true}`)
-}
+	for {
+		msgType, msg, err := ws.ReadMessage()
+		if err != nil {
+			log.Println("read:", err)
+			break
+		}
+		reader := bytes.NewReader(msg)
+		var cmd WebsocketCommand
+		json.NewDecoder(reader).Decode(&cmd)
+		log.Printf("cmd: %v\n", cmd)
 
-type ApiPortPayload struct {
-	Port string `json:"port"`
-}
+		switch cmd.Cmd {
+		case "saveFile":
+			if len(cmd.Args) != 1 {
+				ws.WriteMessage(msgType, []byte(
+					`{"cmd": "saveFile", "ok": false, "error": "Args != 1"}`,
+				))
+				return
+			}
+			go SaveArduinoDataToFile(cmd.Args[0])
+			ws.WriteMessage(msgType, []byte(
+				`{"cmd": "saveFile", "ok": true}`,
+			))
 
-func apiSetPortHandler(w http.ResponseWriter, req *http.Request) {
-	log.Println("/api/port")
-
-	var payload ApiPortPayload
-
-	err := json.NewDecoder(req.Body).Decode(&payload)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
-	}
-	fmt.Printf("%v\n", payload)
-	err = ArduinoConnect(payload.Port)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-	} else {
-		fmt.Fprintf(w, `{"ok": true}`)
+		case "setPort":
+			if len(cmd.Args) != 1 {
+				ws.WriteMessage(msgType, []byte(
+					`{"cmd": "setPort", "ok": false, "error": "Args != 1"}`,
+				))
+			}
+			err = ArduinoConnect(cmd.Args[0])
+			if err != nil {
+				ws.WriteMessage(msgType, []byte(fmt.Sprintf(
+					`{"cmd": "setPort", "ok": false, "error": "%s"}`,
+					err.Error(),
+				)))
+			} else {
+				ws.WriteMessage(msgType, []byte(
+					`{"cmd": "setPort", "ok": true}`,
+				))
+			}
+		default:
+			ws.WriteMessage(msgType, []byte(fmt.Sprintf(
+				`{"cmd": "%s", "ok": false, "error": "%s"}`,
+				cmd.Cmd,
+				"Unrecognized command!",
+			)))
+		}
 	}
 }
 
@@ -59,9 +85,7 @@ var content embed.FS
 func main() {
 	browser.OpenURL("http://localhost:8080")
 
-	http.HandleFunc("/api/save", apiSaveFileHandler)
-	http.HandleFunc("/api/port", apiSetPortHandler)
-
+	http.HandleFunc("/ws", websocketHandler)
 	http.Handle("/", http.FileServer(http.FS(content)))
 
 	http.ListenAndServe(":8080", nil)

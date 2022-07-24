@@ -1,3 +1,21 @@
+const connect = () => {
+  // Connect through websocket
+  let ws = new WebSocket("ws://localhost:8080/ws");
+  ws.onopen = (e) => {
+    const dot = document.getElementById("dot");
+    dot.classList.add("connected");
+  }
+  ws.onclose = (e) => {
+    const dot = document.getElementById("dot");
+    dot.classList.clear();
+    dot.classList.add("disconnected");
+  }
+  ws.onerror = (e) => {
+    // TODO: show red dot and message
+  }
+  return ws;
+};
+
 const apiCallSaveFile = async (filename) => {
   const response = await fetch("/api/save", {
     method: "POST",
@@ -37,15 +55,32 @@ const init = () => {
   const filenameForm = document.querySelector("#filename-form");
   const port = document.querySelector("#arduino-form input[type=text]");
 
+  const socket = connect();
+
+  socket.onmessage = (e) => {
+    const result = JSON.parse(e.data);
+    switch (result.cmd) {
+      case "setPort": {
+        const arduinoError = document.querySelector("#arduino-error");
+        arduinoError.textContent = result.ok ? "Connected" : result.error;
+        break;
+      }
+      case "saveFile": {
+        console.log("saveFile", result);
+        break;
+      }
+    }
+  };
+
   filenameForm.addEventListener("submit", (event) => {
     event.preventDefault();
-    apiCallSaveFile(filename.value);
-    filenameInput.value = "";
+    socket.send(JSON.stringify({ cmd: "saveFile", args: [filename.value] }));
+    filename.value = "";
   });
 
   arduinoConfigForm.addEventListener("submit", (event) => {
     event.preventDefault();
-    apiCallSetPort(port.value);
+    socket.send(JSON.stringify({ cmd: "setPort", args: [port.value] }));
   });
 };
 
