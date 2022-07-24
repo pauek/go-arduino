@@ -32,7 +32,7 @@ func ArduinoConnect(name string) (err error) {
 	}
 	port, err := serial.OpenPort(&config)
 	if err != nil {
-		return fmt.Errorf("could not connecto to Arduino: %s", err.Error())
+		return fmt.Errorf("could not connect to Arduino: %s", err.Error())
 	}
 	connection = &ArduinoConnection{Port: port}
 	return nil
